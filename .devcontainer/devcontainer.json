@@ -19,7 +19,7 @@
 
 	// Use 'postCreateCommand' to run commands after the container is created.
 	"postCreateCommand": "apt-get update && git config --global --add safe.directory /workspaces/absa-for-restaurant-reviews \
-		&& pre-commit install && python -m spacy download en_core_web_md"
+		&& pre-commit install"
 
 	// Configure tool-specific properties.
 	// "customizations": {},
