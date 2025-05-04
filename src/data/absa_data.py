@@ -1,33 +1,45 @@
 from typing import List, Tuple
 
-import en_core_web_md
 import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
+from transformers import DistilBertModel, DistilBertTokenizer
 
 
 class ABSAVectorizer:
-    def __init__(self):
+    def __init__(self, model_name: str = "distilbert-base-uncased", device: str = None):
         """Convert review sentences to pre-trained word vectors"""
-        self.model = en_core_web_md.load()
+        self.tokenizer = DistilBertTokenizer.from_pretrained(model_name)
+        self.model = DistilBertModel.from_pretrained(model_name)
+        self.model.eval()
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(self.device)
 
-    def vectorize(self, words):
+    def vectorize(self, sentence: str) -> List[torch.Tensor]:
         """
         Given a sentence, tokenize it and returns a pre-trained word vector
         for each token.
+
+        Parameters
+        ----------
+        sentence : str
+            _description_
+
+        Returns
+        -------
+        List[torch.Tensor]
+            _description_
         """
 
-        sentence_vector = []
-        # Split on words
-        for _, word in enumerate(words.split()):
-            # Tokenize the words using spacy
-            spacy_doc = self.model.make_doc(word)
-            word_vector = [token.vector for token in spacy_doc]
-            sentence_vector += word_vector
+        inputs = self.tokenizer(sentence, return_tensors="pt", add_special_tokens=True)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        return sentence_vector
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+
+        return outputs.last_hidden_state.squeeze(0)  # (seq_len, hidden_size)
 
 
 class ABSADataset(Dataset):
@@ -56,21 +68,29 @@ class ABSADataset(Dataset):
 class ABSADataModule(pl.LightningDataModule):
     """LightningDataModule: Wrapper class for the dataset to be used in training"""
 
-    def __init__(
-        self,
-        vectorizer,
-        batch_size,
-        max_seq_len,
-        train_data: List[Tuple],
-        valid_data: List[Tuple],
-        test_data: List[Tuple],
-    ):
+    def __init__(self, batch_size: int, max_seq_len: int):
         super().__init__()
         self.batch_size = batch_size
         self.max_seq_len = max_seq_len
-        self.absa_train = ABSADataset(train_data, vectorizer)
-        self.absa_valid = ABSADataset(valid_data, vectorizer)
-        self.absa_test = ABSADataset(test_data, vectorizer)
+        self.vectorizer = ABSAVectorizer()
+
+    def setup(
+        self, train_data: List[Tuple], valid_data: List[Tuple], test_data: List[Tuple]
+    ):
+        """Initialize the dataset with the train, valid and test data
+
+        Parameters
+        ----------
+        train_data : List[Tuple]
+            training data
+        valid_data : List[Tuple]
+            validation data
+        test_data : List[Tuple]
+            test data
+        """
+        self.absa_train = ABSADataset(train_data, self.vectorizer)
+        self.absa_valid = ABSADataset(valid_data, self.vectorizer)
+        self.absa_test = ABSADataset(test_data, self.vectorizer)
 
     def collate_fn(self, batch):
         """Convert the input raw data from the dataset into model input"""
